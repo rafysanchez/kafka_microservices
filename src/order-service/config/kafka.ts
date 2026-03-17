@@ -1,65 +1,40 @@
 import { Kafka, Partitioners, Producer } from "kafkajs";
-
-/**
- * ADVANCED KAFKA CONFIGURATION
- * Pattern: Exponential Backoff with Telemetry & Graceful Shutdown
- */
+import { MockProducer } from "../../infra/mock-kafka";
 
 const KAFKA_BROKERS = [process.env.KAFKA_BROKER || 'localhost:9092'];
-const MAX_RETRIES = 10;
-
-// Readiness state for Kubernetes/Health probes
 export let isReady = false;
+export let isMock = false;
 
 const kafka = new Kafka({
   clientId: 'order-service',
   brokers: KAFKA_BROKERS,
   retry: {
-    initialRetryTime: 1000, // 1s
-    retries: MAX_RETRIES,
-    factor: 2, // Exponential factor (1s, 2s, 4s, 8s...)
-    multiplier: 1.5,
-    maxRetryTime: 30000, // Max 30s
-    restartOnFailure: async (error) => {
-      console.error(`[Telemetry] Critical Kafka Failure: ${error.message}`);
-      return true;
-    }
+    initialRetryTime: 300,
+    retries: 2
   }
 });
 
-export const producer: Producer = kafka.producer({ 
+export let producer: any = kafka.producer({ 
   createPartitioner: Partitioners.LegacyPartitioner 
 });
 
-/**
- * Connects to Kafka with structured telemetry logs
- */
 export async function connectKafka() {
-  console.log("[Telemetry] Initializing Kafka connection sequence...");
-  
+  console.log("[Order] Attempting Kafka connection...");
   try {
-    await producer.connect();
+    await (producer as Producer).connect();
     isReady = true;
-    console.log("[Telemetry] Kafka Producer connected successfully. Service is READY.");
-  } catch (error: any) {
-    isReady = false;
-    console.error(`[Telemetry] Kafka Connection Failed: ${error.message}`);
-    throw error;
+    isMock = false;
+    console.log("[Order] Connected to Real Kafka.");
+  } catch (error) {
+    console.warn("[Order] Real Kafka unavailable. Switching to Mock Mode...");
+    producer = new MockProducer();
+    isReady = true;
+    isMock = true;
   }
 }
 
-/**
- * Graceful Shutdown Handler
- */
 export async function disconnectKafka() {
-  console.log("[Telemetry] Starting graceful shutdown of Kafka producer...");
-  isReady = false;
-  try {
-    await producer.disconnect();
-    console.log("[Telemetry] Kafka producer disconnected cleanly.");
-  } catch (error: any) {
-    console.error(`[Telemetry] Error during Kafka disconnect: ${error.message}`);
-  }
+  await producer.disconnect();
 }
 
 // Telemetry Event Listeners

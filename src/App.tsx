@@ -17,6 +17,7 @@ interface ServiceLog {
   service: string;
   event: string;
   orderId: string;
+  status: string;
   offset: string;
   partition: number;
   timestamp: string;
@@ -30,9 +31,11 @@ interface ServiceStatus {
 
 export default function App() {
   const [status, setStatus] = useState<ServiceStatus>({ order: 'offline', catalog: 'offline', notification: 'offline' });
+  const [isMock, setIsMock] = useState(false);
   const [logs, setLogs] = useState<ServiceLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [lastOrder, setLastOrder] = useState<any>(null);
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -41,6 +44,7 @@ export default function App() {
         const data = await res.json();
         setStatus(data.status);
         setLogs(data.logs);
+        setIsMock(data.isMock);
       } catch (err) {
         console.error("Failed to fetch status", err);
       }
@@ -48,19 +52,27 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const placeOrder = async () => {
+  const placeOrder = async (isDuplicate = false) => {
     setLoading(true);
     try {
+      const payload = isDuplicate && lastOrder 
+        ? lastOrder 
+        : {
+            customer: "Lab User",
+            items: ["Kafka Course", "Microservices Book"],
+            total: 99.99
+          };
+
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer: "Lab User",
-          items: ["Kafka Course", "Microservices Book"],
-          total: 99.99
-        })
+        body: JSON.stringify(payload)
       });
+      
+      const data = await res.json();
+      
       if (res.ok) {
+        if (!isDuplicate) setLastOrder(data.order);
         setOrderSuccess(true);
         setTimeout(() => setOrderSuccess(false), 3000);
       }
@@ -93,7 +105,7 @@ export default function App() {
           <div className="flex items-center gap-4 text-xs font-mono text-zinc-500">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${status.order === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              Broker: {status.order === 'connected' ? 'Online' : 'Offline'}
+              Broker: {status.order === 'connected' ? (isMock ? 'Simulated' : 'Online') : 'Offline'}
             </div>
           </div>
         </div>
@@ -121,14 +133,23 @@ export default function App() {
               </div>
               <h3 className="font-semibold mb-1">Order Service</h3>
               <p className="text-xs text-zinc-500 mb-4">Producer: Publishes events to Kafka</p>
-              <button 
-                onClick={placeOrder}
-                disabled={loading}
-                className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm"
-              >
-                {loading ? "Processing..." : "Place New Order"}
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="space-y-2">
+                <button 
+                  onClick={() => placeOrder(false)}
+                  disabled={loading}
+                  className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm"
+                >
+                  {loading ? "Processing..." : "Place New Order"}
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => placeOrder(true)}
+                  disabled={loading || !lastOrder}
+                  className="w-full py-2 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-30 text-zinc-300 font-medium rounded-lg transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  Simulate Duplicate
+                </button>
+              </div>
             </motion.div>
 
             {/* Kafka Broker (Center) */}
@@ -206,10 +227,11 @@ export default function App() {
           </div>
 
           <div className="bg-zinc-900/50 border border-white/5 rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-5 gap-4 p-4 border-b border-white/5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+            <div className="grid grid-cols-6 gap-4 p-4 border-b border-white/5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
               <div>Service</div>
               <div>Event</div>
               <div>Order ID</div>
+              <div>Status</div>
               <div>Offset</div>
               <div className="text-right">Time</div>
             </div>
@@ -225,7 +247,7 @@ export default function App() {
                       key={`${log.orderId}-${log.service}-${log.offset}`}
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className="grid grid-cols-5 gap-4 p-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors"
+                      className="grid grid-cols-6 gap-4 p-4 border-b border-white/5 items-center hover:bg-white/5 transition-colors"
                     >
                       <div className="flex items-center gap-2">
                         <div className={`w-1.5 h-1.5 rounded-full ${log.service === 'Catalog' ? 'bg-amber-500' : 'bg-purple-500'}`} />
@@ -233,6 +255,11 @@ export default function App() {
                       </div>
                       <div className="text-xs text-zinc-400">{log.event}</div>
                       <div className="text-xs font-mono text-emerald-500">{log.orderId}</div>
+                      <div className="text-[10px]">
+                        <span className={`px-2 py-0.5 rounded-full ${log.status === 'Processed' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500 font-bold'}`}>
+                          {log.status}
+                        </span>
+                      </div>
                       <div className="text-xs font-mono text-zinc-500">
                         <span className="bg-zinc-800 px-1.5 py-0.5 rounded">P:{log.partition}</span>
                         <span className="ml-2">O:{log.offset}</span>
@@ -271,10 +298,10 @@ export default function App() {
           <div>
             <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              Offsets
+              Idempotency
             </h4>
             <p className="text-xs text-zinc-500 leading-relaxed">
-              An offset is a unique ID for each message in a partition. It allows consumers to track their progress.
+              Ensures that processing a message multiple times has the same effect as processing it once. Essential for handling network retries and duplicate deliveries.
             </p>
           </div>
         </footer>

@@ -2,11 +2,13 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
-import { producer, connectKafka, disconnectKafka, isReady as isOrderReady } from "./src/order-service/config/kafka.ts";
+import { producer, connectKafka, disconnectKafka, isReady as isOrderReady, isMock } from "./src/order-service/config/kafka.ts";
 import { connectCatalog, disconnectCatalog, isReady as isCatalogReady } from "./src/catalog-service/config/kafka.ts";
 import { connectNotification, disconnectNotification, isReady as isNotificationReady } from "./src/notification-service/config/kafka.ts";
 
 const serviceLogs: any[] = [];
+const processedCatalogIds = new Set<string>();
+const processedNotificationIds = new Set<string>();
 
 async function startServer() {
   const app = express();
@@ -25,7 +27,7 @@ async function startServer() {
     const allReady = Object.values(services).every(v => v);
     
     if (allReady) {
-      return res.status(200).json({ status: "ready", services });
+      return res.status(200).json({ status: "ready", services, isMock });
     }
     res.status(503).json({ status: "not ready", services });
   });
@@ -37,6 +39,7 @@ async function startServer() {
         catalog: isCatalogReady ? "connected" : "disconnected",
         notification: isNotificationReady ? "connected" : "disconnected"
       }, 
+      isMock,
       logs: serviceLogs.slice(-20) 
     });
   });
@@ -44,9 +47,12 @@ async function startServer() {
   app.post("/api/orders", async (req, res) => {
     if (!isOrderReady) return res.status(503).json({ error: "Order Service not ready" });
     
-    const { customer, items, total } = req.body;
+    const { customer, items, total, id } = req.body;
+    // Se um ID for fornecido, usamos ele (para simular duplicata), caso contrário geramos um novo
+    const orderId = id || Math.random().toString(36).substr(2, 9);
+    
     const order = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: orderId,
       customer,
       items,
       total,
@@ -81,15 +87,22 @@ async function startServer() {
   const server = app.listen(PORT, "0.0.0.0", async () => {
     console.log(`[Server] Running on http://localhost:${PORT}`);
     
-    // Initialize All Services with Advanced Retry
     try {
       await connectKafka();
       
       await connectCatalog((payload, offset, partition) => {
+        const isDuplicate = processedCatalogIds.has(payload.id);
+        
+        if (!isDuplicate) {
+          processedCatalogIds.add(payload.id);
+          // Simula lógica de negócio aqui...
+        }
+
         serviceLogs.push({
           service: "Catalog",
           event: "Stock Update",
           orderId: payload.id,
+          status: isDuplicate ? "Duplicate (Skipped)" : "Processed",
           offset,
           partition,
           timestamp: new Date().toISOString()
@@ -97,10 +110,18 @@ async function startServer() {
       });
 
       await connectNotification((payload, offset, partition) => {
+        const isDuplicate = processedNotificationIds.has(payload.id);
+        
+        if (!isDuplicate) {
+          processedNotificationIds.add(payload.id);
+          // Simula envio de e-mail aqui...
+        }
+
         serviceLogs.push({
           service: "Notification",
           event: "Email Sent",
           orderId: payload.id,
+          status: isDuplicate ? "Duplicate (Skipped)" : "Processed",
           offset,
           partition,
           timestamp: new Date().toISOString()

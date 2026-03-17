@@ -1,4 +1,5 @@
 import { Kafka, Consumer } from "kafkajs";
+import { MockConsumer } from "../../infra/mock-kafka";
 
 const KAFKA_BROKERS = [process.env.KAFKA_BROKER || 'localhost:9092'];
 export let isReady = false;
@@ -6,19 +7,14 @@ export let isReady = false;
 const kafka = new Kafka({
   clientId: 'catalog-service',
   brokers: KAFKA_BROKERS,
-  retry: {
-    initialRetryTime: 1000,
-    retries: 10,
-    factor: 2
-  }
+  retry: { retries: 2 }
 });
 
-export const consumer: Consumer = kafka.consumer({ groupId: 'catalog-group' });
+export let consumer: any = kafka.consumer({ groupId: 'catalog-group' });
 
 export async function connectCatalog(onMessage: (payload: any, offset: string, partition: number) => void) {
-  console.log("[Catalog] Initializing connection...");
   try {
-    await consumer.connect();
+    await (consumer as Consumer).connect();
     await consumer.subscribe({ topic: 'order-events', fromBeginning: true });
     
     await consumer.run({
@@ -27,13 +23,17 @@ export async function connectCatalog(onMessage: (payload: any, offset: string, p
         onMessage(payload, message.offset, partition);
       },
     });
-    
     isReady = true;
-    console.log("[Catalog] Connected and consuming.");
-  } catch (error: any) {
-    isReady = false;
-    console.error(`[Catalog] Connection Failed: ${error.message}`);
-    throw error;
+  } catch (error) {
+    console.warn("[Catalog] Switching to Mock Consumer...");
+    consumer = new MockConsumer();
+    await consumer.run({
+      eachMessage: async ({ topic, partition, message }: any) => {
+        const payload = JSON.parse(message.value?.toString() || "{}");
+        onMessage(payload, message.offset, partition);
+      },
+    });
+    isReady = true;
   }
 }
 

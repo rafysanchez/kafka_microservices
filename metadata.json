@@ -1,0 +1,5 @@
+{
+  "name": "Kafka Microservices Lab",
+  "description": "A didactic lab for E-commerce microservices using Node.js, Kafka, and Docker. Includes Order, Catalog, and Notification services.",
+  "requestFramePermissions": []
+}
